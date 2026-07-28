@@ -1,0 +1,8 @@
+
+The following have been reloaded with a version change:
+  1) workbench/1.5.0 => workbench/2.0.1
+
+INFO:    Terminating squashfuse_ll after timeout
+INFO:    Timeouts can be caused by a running background process
+INFO:    Cleanup error: while stopping driver for /var/lib/apptainer/mnt/session/rootfs: squashfuse_ll exited: fuse: reading device: Software caused connection abort
+rm: cannot remove '/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/brain_reps_datasets/ABCDv6/ICA_maps/ICA_d15_ico06/original*': No such file or directory

@@ -1,0 +1,107 @@
+# @Author: Samuel Naranjo Rincón
+# @Last Modified time: Jul 26, 2026
+
+# ICAd15_schfd100 ICAd15_schfd300 ICAd15_glasserd360 ICAd15_ICAnetmatd15
+# INFOMAPd20_schfd100  INFOMAPd20_schfd300  INFOMAPd20_glasserd360 INFOMAPd20_INFOMAPnetmatd20
+# normICAdemeanNETMAT, normICAdemeanNETMAT_ICA
+# normIMdemeanNETMAT, normIMdemeanNETMAT_IM
+identification:
+  unique_ID: 07262026_reconstruct_topography_ICAd15
+
+data:
+  data_type: ICAd15
+  version: normICA
+  model_type: SiT
+  icores: 2
+
+logging:
+  live_logfile: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/mmfMRI/batch/{}_{}_{}_train
+  live_logfile_test: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/mmfMRI/batch/{}_{}_{}_test
+  model_out_root: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/mmfMRI/model_out
+  model_save_path: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/mmfMRI/logs
+  
+training:
+  fcn_train: fcn_train_recon #train_MSE_skewloss #train_krakenonly
+  fcn_model_to_use: SurfaceImageTransformer
+  dataset_choice: ABCD # ABCD or HCPYA or HCPYA_ABCDdr or infomap_prior_ABCDdr
+  LR: 0.01 #0.00001 is original
+  bs: 32 # batch size, og is 256
+  val_epoch: 1 #5 is our standard, arbitary so feel free to change.
+  epochs: 10
+  bilateral_condition: False #if true, uses 2LR, else just 1L
+  hemi_cond: 1L
+  surf_prep_choice: norm
+  overfit_condition: False
+  overfit_condition_sub_range: 2000 # up to which subj, if overfit_condition false this is ignored
+  VAE_flag: False
+
+testing:
+  immediate_test_flag: True #test after training immediately
+  chosen_test_model: MSE #can be MSE, MAE, RHO
+  same_sample_test: True # if this is true, then out of sample false and vice versa
+  out_of_sample_test: False
+  bs_test: 1
+
+transformer:
+  depth: 6 #layers # O(D*H*(V**x)) dont recall the exponent x but it scales apprx like this so not too high
+  heads: 3 # D=depth=layer, 
+  sit_dim: 192 # tiny-192, small-384
+  dim_head: 64 #64, 128
+  emb_dropout: 0.3
+  dropout: 0.5 # moved this higher, was originall 0.1
+  model_details: 072626_d6h3_tiny_adamW_{}_{}_wGelu_ico02
+
+optimisation:
+  optimiser: AdamW # SGD = stochastic gradent descent; Adam = Adam optimization
+
+Adam:
+  weight_decay: 0.001
+
+AdamW:
+  weight_decay: 0.001 #originally just this
+  use_scheduler: False #orig is false, but in paper they said they did use scheduler=>cosine decay
+  scheduler: CosineDecay  # CosineDecay, StepLR, ReduceLROnPlateau
+  warmup: True
+  nbr_step_warmup: 50
+  
+SGD:
+  weight_decay: 0.
+  momentum: 0.9
+  nesterov: False
+  
+StepLR: 
+  stepsize: 1000
+  decay: 0.5
+
+CosineDecay:
+  T_max: 30 #5000. is original, # 25 for now because it seems to converge at that epoch which could be a local minima
+  eta_min: 0.000001
+
+CosineDecayRestart:
+  T_0: 25 #Number of iterations until the first restart.
+  T_mult: 1 #A factor by which T_i increases after a restart. Default: 1.
+  eta_min: 0.00001
+  
+sub_ico_0:
+    num_patches: 20 
+    num_vertices: 2145 
+
+sub_ico_1:
+  num_patches: 80 
+  num_vertices: 561 
+
+sub_ico_2:
+  num_patches: 320 
+  num_vertices: 153
+
+sub_ico_3:
+    num_patches: 1280
+    num_vertices: 45
+
+sub_ico_4:
+    num_patches: 5120
+    num_vertices: 15
+
+sub_ico_5:
+    num_patches: 20480
+    num_vertices: 6 
