@@ -9,8 +9,12 @@ identification:
   unique_ID: 07262026_reconstruct_topography_ICAd15
 
 data:
-  data_type: ICAd15
-  version: normICA
+  data_type_input: ICA
+  input_dim: 15
+  # prep_type_input: norm
+  data_type_output: ICA
+  output_dim: 15
+  # prep_type_output: norm
   model_type: SiT
   icores: 2
 
@@ -23,7 +27,7 @@ logging:
 training:
   fcn_train: fcn_train_recon #train_MSE_skewloss #train_krakenonly
   fcn_model_to_use: SurfaceImageTransformer
-  dataset_choice: ABCD # ABCD or HCPYA or HCPYA_ABCDdr or infomap_prior_ABCDdr
+  dataset_choice: ABCDv6 # ABCD or HCPYA or HCPYA_ABCDdr or infomap_prior_ABCDdr
   LR: 0.01 #0.00001 is original
   bs: 32 # batch size, og is 256
   val_epoch: 1 #5 is our standard, arbitary so feel free to change.

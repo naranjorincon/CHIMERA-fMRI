@@ -17,5 +17,6 @@ __pycache__/
 *.lst
 *sub-*
 *sub_*
+*.ipynb
 #directories
 batch/
