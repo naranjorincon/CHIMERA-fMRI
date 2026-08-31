@@ -15,18 +15,55 @@ from typing import Optional
 
 
 ############################# TOPOGRAPHY RECONSTRUCTION MODELS #############################
+class LinearDecoder(nn.Module):
+    def __init__(self, *, 
+                 input, output
+                 ):
+        super().__init__()
+
+        self.input = input
+        self.output = output
+        self.mlp = nn.Linear(input, output)
+        
+        
+
+    def forward(self, x):
+        x = self.mlp(x)
+        return x
+
+class ConvDecoder(nn.Module):
+    def __init__(self, *, 
+                 input_channels, output_channels, input_size_patch, input_size_verteces
+                 ):
+        super().__init__()
+
+        self.input_channels = input_channels
+        self.output_channels = output_channels
+        self.input_size = input_size_patch
+        self.input_size_verteces = input_size_verteces
+        self.mlp = nn.Sequential(
+            # nn.GELU(),
+            nn.Conv2d(input_channels, output_channels, kernel_size=(input_size_patch,input_size_verteces))
+            )
+
+    def forward(self, x):
+        x = self.mlp(x)
+        return x
+
 class SurfaceImageTransformer(nn.Module):
     def __init__(self, *,
                         dim=384, 
                         depth=6,
                         heads=4,
                         num_patches=320,
-                        upper_tri=4950, #parcellation
                         num_channels=15,
                         num_vertices=153,
                         dim_head=64,
                         dropout=0.1,
                         emb_dropout=0.3,
+                        VAE_flag=False,
+                        VAE_latent_dim=100,
+                        latent_samples=100
                         ):
 
         super().__init__()
@@ -45,22 +82,15 @@ class SurfaceImageTransformer(nn.Module):
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
         self.to_latent = nn.Sequential(Rearrange('b n d  -> b (n d)'))
-
-        # #for VAE option if needed
-        # self.latent_samples = latent_samples #1000
-        # self.VAE_latent_dim = VAE_latent_dim #10000
-
-        #below is the ICA recon version, Its the same as this but lask MLP uses this linear function. 
-        # I used to have layernorm+GeLu before this but idk is that makes sense cause layernorm is done inside transformer
-        # blocks because of the seperate heads. GeLu does seem necessary from some experiments.
-        # nn.Sequential(nn.Gelu(), nn.Linear(num_patches*dim, num_channels*num_patches*num_vertices))
-    # def _reset_parameters(self):
-    #     for p in self.parameters():
-    #         if p.dim() > 1:
-    #             nn.init.xavier_uniform_(p)
+        self.VAE_flag = VAE_flag
+        if VAE_flag is True:
+            self.VAE_latent_dim = VAE_latent_dim
+            self.latent_samples = latent_samples
+            self.fc_mu = nn.Linear(num_patches*dim, self.VAE_latent_dim)
+            self.fc_var = nn.Linear(num_patches*dim, self.VAE_latent_dim)
     
     def forward(self, img):
-        b,chnl,ptch,vert = img.shape
+        b,c,n,v = img.shape
         x = self.to_patch_embedding(img)
 
         x += self.pos_embedding
@@ -69,19 +99,78 @@ class SurfaceImageTransformer(nn.Module):
         x = self.transformer(x)
         z = self.to_latent(x) # collapses into a vector to extract mean and var
 
-        # #VAE option to think about
-        # # reparam trick
-        # mu = self.fc_mu(z)
-        # log_var = self.fc_var(z)
-        # std = torch.exp(0.5 * log_var) # make into std
+        #VAE option to think about
+        if self.VAE_flag is True:
+            # reparam trick
+            mu = self.fc_mu(z)
+            log_var = self.fc_var(z)
+            std = torch.exp(0.5 * log_var) # make into std
 
-        # epsilon = torch.randn(self.latent_samples, b, self.VAE_latent_dim) #torch.randn_like(mu) # think its supposed to be mu
-        # z_samples = mu.unsqueeze(0) + (std.unsqueeze(0) * epsilon) # reparam trick
-        # z_average = z_samples.mean(dim=0)
-        # z = z_average
+            epsilon = torch.randn(self.latent_samples, b, self.VAE_latent_dim) #torch.randn_like(mu) # think its supposed to be mu
+            z_samples = mu.unsqueeze(0) + (std.unsqueeze(0) * epsilon) # reparam trick
+            z_average = z_samples.mean(dim=0)
+            z = z_average
+
         return z
 
+
+class SiT_LinearDecoder(nn.Module):
+    def __init__(self, *, 
+                dim=384, 
+                depth=6,
+                heads=4,
+                num_patches=320,
+                num_channels=15,
+                num_vertices=153,
+                dim_head=64,
+                dropout=0.1,
+                emb_dropout=0.3,
+                VAE_flag=False,
+                VAE_latent_dim=100,
+                latent_samples=100
+            ):
+        
+        super().__init__()
+
+        self.num_channels = num_channels
+        self.num_patches = num_patches
+        self.num_vertices = num_vertices
+        hidden = num_patches*dim if VAE_flag is False else VAE_latent_dim
+        self.hidden = hidden
+        self.encoder = SurfaceImageTransformer( 
+                    dim=dim, 
+                    depth=depth,
+                    heads=heads,
+                    num_patches=num_patches,
+                    num_channels=num_channels,
+                    num_vertices=num_vertices,
+                    dim_head=dim_head,
+                    dropout=dropout,
+                    emb_dropout=emb_dropout,
+                    VAE_flag=VAE_flag,
+                    VAE_latent_dim=VAE_latent_dim,
+                    latent_samples=latent_samples
+            )
+        output_dim = num_channels*num_patches*num_vertices
+        self.decoder = LinearDecoder(input=hidden, output=output_dim)
+        # self.decoder = ConvDecoder(self.hidden, output_dim)
+
+    def encode(self, img):
+        return self.encoder(img)
     
+    def decode(self, hidden):
+        return self.decoder(hidden)
+    
+    def forward(self, img, return_latent=False):
+        z = self.encode(img)
+        x_hat = self.decode(z)
+        if return_latent is True:
+            return x_hat, z
+
+        return x_hat
+
+
+
 #expert for matrices
 # class BrainGraphTransformer(nn.Module):
 class connectome_encoder_VAE(nn.Module):
@@ -430,9 +519,6 @@ class MVAE(nn.Module):
             """Sample from standard gaussian space converged to, ideally. N(0,I) for decoding."""
             z = torch.randn(n_samples, self.latent_dim, device=device)
             return self.decode(z)
-
-
-
 
 ############################# HELPER FUNCTIONS #############################
 class FeedForward(nn.Module):

@@ -1,0 +1,43 @@
+# @Author: Samuel Naranjo Rincon
+# @Last Modified time: 2026-08-24 
+resolution:
+  ico: 6
+  all_sub_ico: [1, 2, 3] #choose many or just one
+  # sub_ico: 2
+
+data:
+  dataset: ABCDv6 #
+  all_maps: ['ICA', 'PFM']
+  all_maps_dims: [15, 14]
+  all_connectomes: ['schaefer', 'schaefer', 'glasser']
+  all_connectomes_dims: [100, 300, 360]
+  samples_to_do: ['train', 'validation', 'test']
+  overwrite_sample_split: False
+  sub_ids_path: '/ceph/chpc/shared/janine_bijsterbosch_group/WAPIAW_2026/qc/individual_subjects/individual_subject_list_highNSI_3001.txt'
+  patch_indeces_path: '{}/CHIMERA-fMRI/patch_extraction'
+  hemisphere: 1L #1R
+  train_validation_test_path: '{}/CHIMERA-fMRI/utils/subj_ids/{}'
+
+sub_ico_1:
+  num_patches: 80 
+  num_vertices: 561 
+
+sub_ico_2:
+  num_patches: 320 
+  num_vertices: 153
+
+sub_ico_3:
+    num_patches: 1280
+    num_vertices: 45
+
+sub_ico_4:
+    num_patches: 5120
+    num_vertices: 15
+
+sub_ico_5:
+    num_patches: 20480
+    num_vertices: 6 
+
+sub_ico_6:
+  num_patches: 81920
+  num_vertices:  40962
