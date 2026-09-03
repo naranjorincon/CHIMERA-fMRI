@@ -20,3 +20,6 @@ __pycache__/
 *.ipynb
 #directories
 batch/
+images/
+tmp_files/
+
