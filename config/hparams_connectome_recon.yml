@@ -1,37 +1,33 @@
 # @Author: Samuel Naranjo Rincón
-# @Last Modified time: Jul 26, 2026
+# topomap_representations = ["ICA", "PFM", "GRAD", "NMF"] #TODO expand this list as we do more brain reps or get more
+# connectome_representations = ["schaefer", "glasser", "kong", "MSHBM", "TM", "IM"]
 
-# ICAd15_schfd100 ICAd15_schfd300 ICAd15_glasserd360 ICAd15_ICAnetmatd15
-# INFOMAPd20_schfd100  INFOMAPd20_schfd300  INFOMAPd20_glasserd360 INFOMAPd20_INFOMAPnetmatd20
-# normICAdemeanNETMAT, normICAdemeanNETMAT_ICA
-# normIMdemeanNETMAT, normIMdemeanNETMAT_IM
 identification:
-  unique_ID: 2026_0831_d6h3_tiny_adamW_recon_ICAd15_ICAd15_ico02
+  unique_ID: 2026_0903_d4h2_tiny_adamW_recon_schfd100_schfd100_LinearDecoder
 
 data:
-  data_type_input: ICA
-  input_dim: 15
-  prep_type_input: norm
-  data_type_output: ICA
-  output_dim: 15
-  prep_type_output: norm
-  model_type: SiT
-  icores: 2
+  data_type_input: schaefer
+  input_dim: 100
+  prep_type_input: demean
+  data_type_output: schaefer
+  output_dim: 100
+  prep_type_output: demean
+  model_type: linear
   sub_ids_path: '/ceph/chpc/shared/janine_bijsterbosch_group/WAPIAW_2026/qc/individual_subjects/individual_subject_list_highNSI_3001.txt'
 
 logging:
-  live_logfile: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/batch/train_{}_{}_{}d{}_{}d{} #train_SiT_reconstruction_{}d{}_{}d{}
+  live_logfile: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/batch/train_{}_{}_{}d{}_{}d{}_{} #train_SiT_reconstruction_{}d{}_{}d{}
   model_output_path: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/model_out
   model_save_path: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/logs
   
 training:
   fcn_train: fcn_train #train_MSE_skewloss #train_krakenonly
-  fcn_model_to_use: SiT_LinearDecoder
+  fcn_model_to_use: connectome_recon
   dataset_choice: ABCDv6 # ABCD or HCPYA or HCPYA_ABCDdr or infomap_prior_ABCDdr
   overfit_condition: True
   overfit_condition_sub_range: 100 # up to which subj, if overfit_condition false this is ignored
   bs: 32 # batch size, og is 256
-  LR: 0.01 #0.00001 is original
+  LR: 0.001 #0.00001 is original
   val_epoch: 1 #5 is our standard, arbitary so feel free to change.
   epochs: 4
   bilateral_condition: False #if true, uses 2LR, else just 1L
@@ -46,16 +42,17 @@ testing:
   bs_test: 1
 
 transformer:
-  depth: 6 #layers # O(D*H*(V**x)) dont recall the exponent x but it scales apprx like this so not too high
-  heads: 3 # D=depth=layer, 
-  sit_dim: 192 # tiny-192, small-384
-  dim_head: 64 #64, 128
+  depth: 4 #layers # O(D*H*(V**x)) dont recall the exponent x but it scales apprx like this so not too high
+  heads: 2 # D=depth=layer, 
+  dim: 128 #embedding proportion, based on parcellation_size*0.1 so 10% or 0.2->20%
+  # dim_head: 64 #64, 128
   emb_dropout: 0.3
   dropout: 0.5 # moved this higher, was originall 0.1
-  model_details: 2026_0831_d6h3_tiny_adamW_recon_ICAd15_ICAd15_ico02
+  model_details: 2026_0903_d4h2_tiny_adamW_recon_schfd100_schfd100_LinearDecoder
   VAE_flag: False
   vae_dim: 100
   latent_samples: 100
+  decoder_name: LinearDecoder #LinearDecoder, ConvDecoder, PointwiseDecoder, GATDecoder #not working: MeshConvDecoder
 
 optimisation:
   optimiser: AdamW # SGD = stochastic gradent descent; Adam = Adam optimization
@@ -88,26 +85,3 @@ CosineDecayRestart:
   T_mult: 1 #A factor by which T_i increases after a restart. Default: 1.
   eta_min: 0.00001
   
-sub_ico_0:
-    num_patches: 20 
-    num_vertices: 2145 
-
-sub_ico_1:
-  num_patches: 80 
-  num_vertices: 561 
-
-sub_ico_2:
-  num_patches: 320 
-  num_vertices: 153
-
-sub_ico_3:
-    num_patches: 1280
-    num_vertices: 45
-
-sub_ico_4:
-    num_patches: 5120
-    num_vertices: 15
-
-sub_ico_5:
-    num_patches: 20480
-    num_vertices: 6 

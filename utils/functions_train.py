@@ -44,6 +44,7 @@ def fcn_train(model,
         targets = targets.detach().numpy()
         targets = targets.reshape(targets.shape[0],-1)
         pred = pred.reshape(pred.shape[0],-1)
+        output_average = output_average[np.newaxis]
         output_average = output_average.reshape(output_average.shape[0],-1)
         if "demean" in output_prep_choice or "norm" in output_prep_choice: # if doing any demeaning, then predictions are of original and we must demean here
             tr_corr_demean = np.corrcoef(targets, pred) #[subj*2 x subj*2] matrix where quadrant1 = target_target, quad2=target_pred, quad3=pred_target, quad4=pred_pred

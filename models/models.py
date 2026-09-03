@@ -14,42 +14,6 @@ from torch import Tensor
 from typing import Optional
 
 
-############################# TOPOGRAPHY RECONSTRUCTION MODELS #############################
-class LinearDecoder(nn.Module):
-    def __init__(self, *, 
-                 input, output
-                 ):
-        super().__init__()
-
-        self.input = input
-        self.output = output
-        self.mlp = nn.Linear(input, output)
-        
-        
-
-    def forward(self, x):
-        x = self.mlp(x)
-        return x
-
-class ConvDecoder(nn.Module):
-    def __init__(self, *, 
-                 input_channels, output_channels, input_size_patch, input_size_verteces
-                 ):
-        super().__init__()
-
-        self.input_channels = input_channels
-        self.output_channels = output_channels
-        self.input_size = input_size_patch
-        self.input_size_verteces = input_size_verteces
-        self.mlp = nn.Sequential(
-            # nn.GELU(),
-            nn.Conv2d(input_channels, output_channels, kernel_size=(input_size_patch,input_size_verteces))
-            )
-
-    def forward(self, x):
-        x = self.mlp(x)
-        return x
-
 class SurfaceImageTransformer(nn.Module):
     def __init__(self, *,
                         dim=384, 
@@ -58,7 +22,7 @@ class SurfaceImageTransformer(nn.Module):
                         num_patches=320,
                         num_channels=15,
                         num_vertices=153,
-                        dim_head=64,
+                        # dim_head=64,
                         dropout=0.1,
                         emb_dropout=0.3,
                         VAE_flag=False,
@@ -79,15 +43,15 @@ class SurfaceImageTransformer(nn.Module):
 
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches, dim))
         self.dropout = nn.Dropout(emb_dropout)
-
+        dim_head = math.ceil(dim / heads)
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
-        self.to_latent = nn.Sequential(Rearrange('b n d  -> b (n d)'))
-        self.VAE_flag = VAE_flag
-        if VAE_flag is True:
-            self.VAE_latent_dim = VAE_latent_dim
-            self.latent_samples = latent_samples
-            self.fc_mu = nn.Linear(num_patches*dim, self.VAE_latent_dim)
-            self.fc_var = nn.Linear(num_patches*dim, self.VAE_latent_dim)
+        # self.to_latent = nn.Sequential(Rearrange('b n d  -> b (n d)'))
+        # self.VAE_flag = VAE_flag
+        # if VAE_flag is True:
+        #     self.VAE_latent_dim = VAE_latent_dim
+        #     self.latent_samples = latent_samples
+        #     self.fc_mu = nn.Linear(num_patches*dim, self.VAE_latent_dim)
+        #     self.fc_var = nn.Linear(num_patches*dim, self.VAE_latent_dim)
     
     def forward(self, img):
         b,c,n,v = img.shape
@@ -96,173 +60,72 @@ class SurfaceImageTransformer(nn.Module):
         x += self.pos_embedding
         x = self.dropout(x)
 
-        x = self.transformer(x)
-        z = self.to_latent(x) # collapses into a vector to extract mean and var
+        z = self.transformer(x)
+        # z = self.to_latent(x) # collapses into a vector to extract mean and var
 
         #VAE option to think about
-        if self.VAE_flag is True:
-            # reparam trick
-            mu = self.fc_mu(z)
-            log_var = self.fc_var(z)
-            std = torch.exp(0.5 * log_var) # make into std
+        # if self.VAE_flag is True:
+        #     # reparam trick
+        #     mu = self.fc_mu(z)
+        #     log_var = self.fc_var(z)
+        #     std = torch.exp(0.5 * log_var) # make into std
 
-            epsilon = torch.randn(self.latent_samples, b, self.VAE_latent_dim) #torch.randn_like(mu) # think its supposed to be mu
-            z_samples = mu.unsqueeze(0) + (std.unsqueeze(0) * epsilon) # reparam trick
-            z_average = z_samples.mean(dim=0)
-            z = z_average
+        #     epsilon = torch.randn(self.latent_samples, b, self.VAE_latent_dim) #torch.randn_like(mu) # think its supposed to be mu
+        #     z_samples = mu.unsqueeze(0) + (std.unsqueeze(0) * epsilon) # reparam trick
+        #     z_average = z_samples.mean(dim=0)
+        #     z = z_average
 
         return z
 
-
-class SiT_LinearDecoder(nn.Module):
-    def __init__(self, *, 
-                dim=384, 
-                depth=6,
-                heads=4,
-                num_patches=320,
-                num_channels=15,
-                num_vertices=153,
-                dim_head=64,
-                dropout=0.1,
-                emb_dropout=0.3,
-                VAE_flag=False,
-                VAE_latent_dim=100,
-                latent_samples=100
-            ):
-        
-        super().__init__()
-
-        self.num_channels = num_channels
-        self.num_patches = num_patches
-        self.num_vertices = num_vertices
-        hidden = num_patches*dim if VAE_flag is False else VAE_latent_dim
-        self.hidden = hidden
-        self.encoder = SurfaceImageTransformer( 
-                    dim=dim, 
-                    depth=depth,
-                    heads=heads,
-                    num_patches=num_patches,
-                    num_channels=num_channels,
-                    num_vertices=num_vertices,
-                    dim_head=dim_head,
-                    dropout=dropout,
-                    emb_dropout=emb_dropout,
-                    VAE_flag=VAE_flag,
-                    VAE_latent_dim=VAE_latent_dim,
-                    latent_samples=latent_samples
-            )
-        output_dim = num_channels*num_patches*num_vertices
-        self.decoder = LinearDecoder(input=hidden, output=output_dim)
-        # self.decoder = ConvDecoder(self.hidden, output_dim)
-
-    def encode(self, img):
-        return self.encoder(img)
-    
-    def decode(self, hidden):
-        return self.decoder(hidden)
-    
-    def forward(self, img, return_latent=False):
-        z = self.encode(img)
-        x_hat = self.decode(z)
-        if return_latent is True:
-            return x_hat, z
-
-        return x_hat
-
-
-
-#expert for matrices
 # class BrainGraphTransformer(nn.Module):
-class connectome_encoder_VAE(nn.Module):
-    '''
-    Brain Graph Transformer taken from "Brain Network Transformer": https://arxiv.org/abs/2210.06681
-    Node features are that node's connectivity profile and it is shown to be good enough to embed graph information, lapalce pos emb doesn't add more
-    or take away. It IS computationlly heavy, so why do it if node conn profile is good enough - so they (the authors) argue. In the paper, each node has its profile (the connectivity) and 
-    vanilla transformer modules are used on those node representations. Conn profile is the "corresponding row of that node". Edge weights are also ignored because computationally expensive and do not
-    seem to make performance better in the specific context of correlation brain ROIs matrices. As such, we use the vanilla transformer module and node feats as their conn profile.
-    '''
-    def __init__(self, *,
-                        input_sz, # schf100 parcellation
-                        model_dim, # no self loops 
-                        depth, 
-                        heads, 
-                        emb_dropout=0.1, 
-                        dropout=0.3, # drop out used in transformer block
-                        VAE_latent_dim=100,
-                        latent_samples=100
-                        ):
-        super().__init__()
-        self.VAE_latent_dim = VAE_latent_dim
-        self.latent_samples = latent_samples
+#     '''
+#     Brain Graph Transformer taken from "Brain Network Transformer": https://arxiv.org/abs/2210.06681
+#     Node features are that node's connectivity profile and it is shown to be good enough to embed graph information, laplace pos emb doesn't add more
+#     or take away. It IS computationlly heavy, so why do it if node conn profile is good enough - so they (the authors) argue. In the paper, each node has its profile (the connectivity) and 
+#     vanilla transformer modules are used on those node representations. Conn profile is the "corresponding row of that node". Edge weights are also ignored because computationally expensive and do not
+#     seem to make performance better in the specific context of correlation brain ROIs matrices. As such, we use the vanilla transformer module and node feats as their conn profile.
 
-        transformer_FFN_dim= 4*model_dim #4*d_model according to DeiT feedforward in transformer architecture
-        self.dropout = nn.Dropout(emb_dropout) # embedding drop out
-        enc_dim_head = (math.ceil(model_dim / heads)) # based on DeiT should be ceil(model_dim/heads)
-        self.transformer = Transformer(model_dim, depth, heads, enc_dim_head, transformer_FFN_dim, dropout)
-        self.collapse_transformer_output = nn.Sequential(Rearrange('b n d  -> b (n d)')) #transformer output is same shape as input
+#     Input is the connectome itself, as is. 100x100 or 360x360 and so on.
+#     '''
+#     def __init__(self, *,
+#                         enc_model_dim, # no self loops 
+#                         depth, 
+#                         heads, 
+#                         emb_dropout=0.1, 
+#                         dropout=0.3
+#                         ):
+#         super().__init__()
 
-        self.fc_mu = nn.Linear(input_sz*model_dim, VAE_latent_dim) # linear project from batch x 10k -> batch x vae_latent
-        self.fc_var = nn.Linear(input_sz*model_dim, VAE_latent_dim)
+#         transformer_FFN_dim= 4*enc_model_dim #4*d_model according to DeiT feedforward in transformer architecture
+#         self.dropout = nn.Dropout(emb_dropout) # embedding drop out
+#         enc_dim_head = math.ceil(enc_model_dim / heads) # based on DeiT should be ceil(model_dim/heads)
+#         self.transformer = Transformer(enc_model_dim, depth, heads, enc_dim_head, transformer_FFN_dim, dropout)
+        
+#     def forward(self, connectome):
+#         connectome = self.dropout(connectome)
+#         # Pass to Transformer
+#         connectome = self.transformer(connectome)
+#         return connectome
+        
 
-    def _reset_parameters(self):
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+# def vector2mat(self, x:Tensor) -> Tensor:
+#     """
+#     connectome reconstruction/translations are giving us just the vectorized upper triangle. So making it into a mat here.
+#     This is just a tranformation, so not part of the re-weighting/learning process.
+#     """
+#     b = x.shape[0]
+#     device=x.device
+#     mat = torch.zeros(b, self.N, self.N, device=device) #make 3D tensor of shape batch,N,N
+#     #tri indices
+#     offset=-1 #make diagonal 1
+#     row_idx, col_idx = torch.tril_indices(
+#         self.N, self.N, offset=offset, device=device)
+#     #fill lower tri
+#     mat[:, row_idx, col_idx]=x
+#     mat = mat + mat.transpose(-1,-2) #transpose alst one and second to last one casue 2D matrix inside 3D tensor?
+#     mat.diagonal(dim1=-2, dim2=-1).fill_(1.0)
+#     return mat
 
-    def forward(self, connectome: Tensor) -> tuple[Tensor, Tensor]:
-        b, i, j = connectome.shape
-        x = self.dropout(connectome)
-        x = self.transformer(x)
-        x = self.collapse_transformer_output(x)
-
-        # reparam trick
-        mu = self.fc_mu(x)
-        log_var = self.fc_var(x)
-
-        return mu, log_var
-    
-class connectome_decoder_linear(nn.Module):
-    def __init__(self, *,
-                        parcellation_N: int=100,
-                        VAE_latent_dim:int=100,
-                        hidden_dim:int=100
-                        ):
-        super().__init__()
-
-        self.N=parcellation_N
-        uppertri= self.N * (self.N-1) // 2 #not including diagonal, if so then N*(N+1)//2
-        self.uppertri=uppertri
-
-        self.mlp_head = nn.Sequential(
-            nn.Linear(VAE_latent_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, uppertri),
-            nn.Tanh(),
-            # Rearrange('b (c p v)  -> b c p v', c=num_channels, p=num_patches, v=num_vertices)
-        )
-
-    def vector2mat(self, x:Tensor) -> Tensor:
-        """
-        connectome reconstruction/translations are giving us just the vectorized upper triangle. So making it into a mat here.
-        This is just a tranformation, so not part of the re-weighting/learning process.
-        """
-        b = x.shape[0]
-        device=x.device
-        mat = torch.zeros(b, self.N, self.N, device=device) #make 3D tensor of shape batch,N,N
-        #tri indices
-        offset=-1 #make diagonal 1
-        row_idx, col_idx = torch.tril_indices(
-            self.N, self.N, offset=offset, device=device)
-        #fill lower tri
-        mat[:, row_idx, col_idx]=x
-        mat = mat + mat.transpose(-1,-2) #transpose alst one and second to last one casue 2D matrix inside 3D tensor?
-        mat.diagonal(dim1=-2, dim2=-1).fill_(1.0)
-        return mat
-    
-    def forward(self, z: Tensor) -> Tensor:
-        output = self.mlp_head(z)
-        output = self.vector2mat(output)
-        return output
     
 def PoE(
         mu_list: list[Tensor],

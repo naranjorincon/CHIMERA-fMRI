@@ -1,12 +1,7 @@
 # @Author: Samuel Naranjo Rincón
-# @Last Modified time: Jul 26, 2026
 
-# ICAd15_schfd100 ICAd15_schfd300 ICAd15_glasserd360 ICAd15_ICAnetmatd15
-# INFOMAPd20_schfd100  INFOMAPd20_schfd300  INFOMAPd20_glasserd360 INFOMAPd20_INFOMAPnetmatd20
-# normICAdemeanNETMAT, normICAdemeanNETMAT_ICA
-# normIMdemeanNETMAT, normIMdemeanNETMAT_IM
 identification:
-  unique_ID: 2026_0831_d6h3_tiny_adamW_recon_ICAd15_ICAd15_ico02
+  unique_ID: 2026_0902_d6h3_tiny_adamW_recon_ICAd15_ICAd15_ico03_LinearDecoder
 
 data:
   data_type_input: ICA
@@ -16,24 +11,24 @@ data:
   output_dim: 15
   prep_type_output: norm
   model_type: SiT
-  icores: 2
+  icores: 3
   sub_ids_path: '/ceph/chpc/shared/janine_bijsterbosch_group/WAPIAW_2026/qc/individual_subjects/individual_subject_list_highNSI_3001.txt'
 
 logging:
-  live_logfile: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/batch/train_{}_{}_{}d{}_{}d{} #train_SiT_reconstruction_{}d{}_{}d{}
+  live_logfile: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/batch/train_{}_{}_{}d{}_{}d{}_{} #train_SiT_reconstruction_{}d{}_{}d{}
   model_output_path: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/model_out
   model_save_path: /ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/logs
   
 training:
   fcn_train: fcn_train #train_MSE_skewloss #train_krakenonly
-  fcn_model_to_use: SiT_LinearDecoder
+  fcn_model_to_use: topomap_recon
   dataset_choice: ABCDv6 # ABCD or HCPYA or HCPYA_ABCDdr or infomap_prior_ABCDdr
-  overfit_condition: True
+  overfit_condition: False
   overfit_condition_sub_range: 100 # up to which subj, if overfit_condition false this is ignored
   bs: 32 # batch size, og is 256
-  LR: 0.01 #0.00001 is original
+  LR: 0.001 #0.00001 is original
   val_epoch: 1 #5 is our standard, arbitary so feel free to change.
-  epochs: 4
+  epochs: 30
   bilateral_condition: False #if true, uses 2LR, else just 1L
   hemi_cond: 1L
   finetune: False 
@@ -48,14 +43,15 @@ testing:
 transformer:
   depth: 6 #layers # O(D*H*(V**x)) dont recall the exponent x but it scales apprx like this so not too high
   heads: 3 # D=depth=layer, 
-  sit_dim: 192 # tiny-192, small-384
-  dim_head: 64 #64, 128
+  dim: 192 # tiny-192, small-384
+  # dim_head: 64 #64, 128
   emb_dropout: 0.3
   dropout: 0.5 # moved this higher, was originall 0.1
-  model_details: 2026_0831_d6h3_tiny_adamW_recon_ICAd15_ICAd15_ico02
+  model_details: 2026_0902_d6h3_tiny_adamW_recon_ICAd15_ICAd15_ico03_LinearDecoder
   VAE_flag: False
   vae_dim: 100
   latent_samples: 100
+  decoder_name: LinearDecoder #LinearDecoder, ConvDecoder, PointwiseDecoder, GATDecoder #not working: MeshConvDecoder
 
 optimisation:
   optimiser: AdamW # SGD = stochastic gradent descent; Adam = Adam optimization

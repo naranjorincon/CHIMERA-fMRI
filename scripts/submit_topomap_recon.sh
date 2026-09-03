@@ -6,7 +6,7 @@
 #SBATCH --account=janine_bijsterbosch
 #SBATCH --mem-per-cpu 20G 
 #SBATCH --cpus-per-task 10
-#SBATCH -t 0-03:00:00  # might depend on epoch, approx 50epoch = 24 hours
+#SBATCH -t 0-05:00:00  # might depend on epoch, approx 50epoch = 24 hours
 
 source activate neurotranslate
 module load workbench
@@ -27,7 +27,7 @@ config_model_name=$(grep 'unique_ID' ${chosen_param_config} | awk '{ print $2 }'
 echo Model name and config file to freeze: ${config_model_name}
 
 # date_time_stamp=$(date +"%Y%m%d_%Hh_%Mm_%Ss")
-model_type="SiT_LN"
+model_type="topomap_recon"
 mkdir -p ${working_dir_path}/tmp_files/${model_type}
 touch ${working_dir_path}/tmp_files/${model_type}/config_${config_model_name}.yml
 cp ${chosen_param_config} ${working_dir_path}/tmp_files/${model_type}/config_${config_model_name}.yml

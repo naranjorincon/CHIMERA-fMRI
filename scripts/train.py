@@ -12,7 +12,8 @@ import copy
 # import helper modules
 import numpy as np
 import pandas as pd
-from models import models
+# from models import models
+from models import experiment_topomap_recon
 from utils.helper_functions import * #so id ont have to write ut.write_to_file everytime
 from utils import functions_train
 import torch.optim as optim 
@@ -36,8 +37,8 @@ def fcn_validate(model, val_loader, output_prep_choice,
                 pred, latent, log_latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
                 del latent, inputs, log_latent
             else:
-                pred, latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
-                del latent, inputs
+                pred = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
+                del inputs
 
             # Output Losses
             Lr_mse = torch.FloatTensor(torch.nn.MSELoss()(targets, pred)) # MSE should be low 
@@ -50,6 +51,7 @@ def fcn_validate(model, val_loader, output_prep_choice,
             targets = targets.detach().numpy()
             targets = targets.reshape(targets.shape[0],-1)
             pred = pred.reshape(pred.shape[0],-1)
+            output_average = output_average[np.newaxis]
             output_average = output_average.reshape(output_average.shape[0],-1)
             if "demean" in output_prep_choice or "norm" in output_prep_choice: # if doing any demeaning, then predictions are of original and we must demean here
                 val_corr_demean = np.corrcoef(targets, pred) #[subj*2 x subj*2] matrix where quadrant1 = target_target, quad2=target_pred, quad3=pred_target, quad4=pred_pred
@@ -111,21 +113,38 @@ def whole_model_arch(config):
     output_information = [data_type_output, output_dim]
 
     # Training configuration, depends on model being used
-    icores = config['data']['icores']   
-    model_config = {
-        "dim": config['transformer']['sit_dim'],
+    icores = None if config['data']['icores'] == None else config['data']['icores']
+    if not icores is None:
+        model_config_topomap = {
+        "dim": config['transformer']['dim'],
         "depth": config['transformer']['depth'],
         "heads": config['transformer']['heads'],
         "num_vertices": config['sub_ico_{}'.format(icores)]['num_vertices'],
         "num_channels": config['data']['input_dim'],
         "num_patches": config['sub_ico_{}'.format(icores)]['num_patches'],
-        "dim_head": config['transformer']['dim_head'],
+        # "dim_head": config['transformer']['dim_head'],
         "dropout": config['transformer']['dropout'],
         "emb_dropout": config['transformer']['emb_dropout'],
         "VAE_flag": config['transformer']['VAE_flag'],
         "VAE_latent_dim": config['transformer']['vae_dim'],
-        "latent_samples": config['transformer']['latent_samples']
-    }
+        "latent_samples": config['transformer']['latent_samples'],
+        "decoder_name": config['transformer']['decoder_name']
+        }
+        #choose which to use
+        chosen_model_config=model_config_topomap
+    else:
+        model_config_connectome = {
+            "connectome_features": int(0.5 * input_dim*(input_dim-1)),
+            "dim": config['transformer']['dim'],
+            # "depth": config['transformer']['depth'],
+            # "heads": config['transformer']['heads'],
+            "emb_dropout": config['transformer']['emb_dropout'], 
+            # "dropout":config['transformer']['dropout'],
+            "decoder_name": config['transformer']['decoder_name']
+        }
+
+        #choose which to use
+        chosen_model_config=model_config_connectome
 
     #infer operation to be done
     if input_information == output_information:
@@ -157,7 +176,7 @@ def whole_model_arch(config):
 
     #training model details
     fcn_train = getattr(functions_train, config['training']['fcn_train'])  
-    fcn_model_module = getattr(models, config['training']['fcn_model_to_use']) 
+    fcn_model_module = getattr(experiment_topomap_recon, config['training']['fcn_model_to_use']) 
     dataset_choice = config['training']['dataset_choice']
     overfit_condition = config['training']['overfit_condition']
     overfit_condition_sub_range = config['training']['overfit_condition_sub_range'] if overfit_condition is False else 0 #subset of subjects to debug on
@@ -171,7 +190,8 @@ def whole_model_arch(config):
     left_or_right = "L" if hemi_cond == "1L" else "R"
     sub_ids_path = config['data']['sub_ids_path']    
     model_details = config['transformer']['model_details']
-    write_fpath = config['logging']['live_logfile'].format(model_type, operation, data_type_input, input_dim, data_type_output, output_dim) + '.print'
+    decoder_name = config['transformer']['decoder_name']
+    write_fpath = config['logging']['live_logfile'].format(model_type, operation, data_type_input, input_dim, data_type_output, output_dim, decoder_name) + '.print'
     write_to_file(f"Using ico-{icores} surf data.", filepath=write_fpath)
     write_to_file(f"Model details are: {model_details}\n", filepath=write_fpath)
 
@@ -226,7 +246,7 @@ def whole_model_arch(config):
     write_to_file(f"Loaded in data. Tunning on dataset: {dataset_choice}", filepath=write_fpath)
     
     # Initialize model, optimizer, etc.
-    model = fcn_model_module(**model_config).to(device)
+    model = fcn_model_module(**chosen_model_config).to(device)
     
     # initialize optimizer / loss
     scheduler = False #default is false, unless otherwise specified by the yml configuration file
@@ -276,9 +296,6 @@ def whole_model_arch(config):
         chosen_model = model_path[0]
         write_to_file(f'\n\nmodel loaded is {chosen_model}', filepath=write_fpath)
         model.load_state_dict(torch.load(chosen_model)) # most recent model
-    else:
-        # reset params 
-        model._reset_parameters()
     
     model.to(device)
     running_train_loss = 0
@@ -298,7 +315,7 @@ def whole_model_arch(config):
         #  across_sub_corr_demean_std, 
          across_sub_corr_org, 
         #  across_sub_corr_org_std
-         ] = fcn_train(model, train_loader, prep_type_output, output_average, device, optimizer, model_config["VAE_flag"])
+         ] = fcn_train(model, train_loader, prep_type_output, output_average, device, optimizer, chosen_model_config["VAE_flag"])
         
         if scheduler: # if you are using a scheduler, this should be TRUE o.w. FALSE so no need to do the "step" to change LR
             lr_schedule.step() #after each epoch        
@@ -328,7 +345,7 @@ def whole_model_arch(config):
             #  val_deman_corr_std, 
              val_orig_corr, 
             #  val_orig_corr_std
-             ] = fcn_validate(model, val_loader, prep_type_output, output_average, device, model_config["VAE_flag"])
+             ] = fcn_validate(model, val_loader, prep_type_output, output_average, device, chosen_model_config["VAE_flag"])
                                                                                                                                                         
             write_to_file(f'| Validation | Epoch - {epoch} | MAE - {grpavg_val_mae:.4f} | MSE = {grpavg_val_mse:.4f} | demeanCorr {val_deman_corr:.4f}', filepath=write_fpath)
 
@@ -388,10 +405,12 @@ def whole_model_arch(config):
         mae_test_list = []
         te_ground_truth = []
         te_pred = []
+        tr_ground_truth = []
+        tr_pred = []
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 inputs, targets = data[0].to(device), data[1].to(device)#.squeeze()
-                if model_config["VAE_flag"]:
+                if chosen_model_config["VAE_flag"] is True:
                     pred, latent, log_latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
                     del latent, inputs, log_latent
                 else:
@@ -410,8 +429,8 @@ def whole_model_arch(config):
                 #make into numpy vars and to cpu
                 pred = pred.detach().numpy()
                 targets = targets.detach().numpy()
-                targets = targets.reshape(targets.shape[0],-1)
-                pred = pred.reshape(pred.shape[0],-1)
+                targets = targets.reshape(targets.shape[0],-1).squeeze()
+                pred = pred.reshape(pred.shape[0],-1).squeeze()
 
                 te_ground_truth.append(targets)
                 te_pred.append(pred)
@@ -419,43 +438,55 @@ def whole_model_arch(config):
             write_to_file("Done with TESTING loop.", filepath=write_fpath)
 
             # to optimize testing and data saving, will only get best, mid, and lowest corr
+            te_ground_truth = np.asarray(te_ground_truth)
+            te_pred = np.asarray(te_pred)
             across_sub_rho = np.corrcoef(te_ground_truth, te_pred) # gives sub_dim*2 x sub_dim*2 and will likely be two square clusters truth and pred
             write_to_file(f"SZ of bigg matrix: {across_sub_rho.shape}", filepath=write_fpath)
             np.save(f"{folder_to_save_test}/te_big_corr_matrix.npy", across_sub_rho) # save for viz later
 
-            # for i, data in enumerate(train_loader):
-            #     inputs, targets = data[0].to(device), data[1].to(device)#.squeeze()
-            #     # pred, latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
-            #     # del latent, inputs
+            import itertools
+            # Take only the first 5 batches from the dataloader
+            for batch_idx, (images, labels) in enumerate(itertools.islice(train_loader, 5)):
+                # write_to_file(f"Batch {batch_idx}: {images.shape} <--> {labels.shape}", filepath=write_fpath)
+                inputs, targets = images, labels
 
-            #     if model_config["VAE_flag"]:
-            #         pred, latent, log_latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
-            #         del latent, inputs, log_latent
-            #     else:
-            #         pred, latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
-            #         del latent, inputs
-
-            #     # just having some output to see while testing, otherwise terminal is silent. Nice to see progress IMO
-            #     if i % 100 == 0:
-            #         write_to_file(f"checkpoint. Running test subject: {i}", filepath=write_fpath)
-
-            #     pred = pred.detach().numpy()
-            #     targets = targets.detach().numpy()
+                if chosen_model_config["VAE_flag"] is True:
+                    pred, latent, log_latent = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
+                    del latent, inputs, log_latent
+                else:
+                    pred = model(inputs) # pred will be a iterable, so pred[0] is the outcome and pred[1] is the latent which we dont need
+                    del inputs
                 
-            #     mae = np.mean(np.abs(pred - targets))
-            #     mae_train_list.append(mae)
+                # just having some output to see while testing, otherwise terminal is silent. Nice to see progress IMO
+                if i % 100 == 0:
+                    write_to_file(f"checkpoint. Running TRAIN subject: {i}", filepath=write_fpath)
 
-            #     mse = np.mean( (pred - targets)**2 )
-            #     mse_train_list.append(mse)
+                mse = torch.FloatTensor(torch.nn.MSELoss()(targets, pred)) # MSE should be low 
+                mse_train_list.append(mse.detach().numpy())
+                mae = torch.FloatTensor(torch.nn.L1Loss()(targets, pred)) # MAE should be low 
+                mae_train_list.append(mae.detach().numpy())
 
-            #     tr_ground_truth[i, :] = targets
-            #     tr_pred[i, :] = pred
+                #make into numpy vars and to cpu
+                pred = pred.detach().numpy()
+                targets = targets.detach().numpy()
+                targets = targets.reshape(targets.shape[0],-1).squeeze() #BatchxFlatten_Array
+                #split batchxaray into 1xarray to make subjects be separate entries on the list for later correlation matrix
+                targets = np.split(targets,len(targets), axis=0) #now its a list, each with 1xFlatten_Array
+                for ii in targets:
+                    tr_ground_truth.append(ii.squeeze())
 
-            # write_to_file(f"Done with TRAINING loop.", filepath=write_fpath)
+                pred = pred.reshape(pred.shape[0],-1).squeeze()
+                pred = np.split(pred,len(pred), axis=0) #list
+                for ii in pred:
+                    tr_pred.append(ii.squeeze())
 
-            # # to optimize testing and data saving, will only get best, mid, and lowest corr
-            # across_sub_rho = np.corrcoef(tr_ground_truth, tr_pred) # gives sub_dim*2 x sub_dim*2 and will likely be two square clusters truth and pred
-            # np.save(f"{folder_to_save_test}/tr_big_corr_matrix.npy", across_sub_rho) # save for viz later
+            write_to_file(f"Done with TRAINING loop.", filepath=write_fpath)
+
+            # to optimize testing and data saving, will only get best, mid, and lowest corr
+            tr_ground_truth = np.asarray(tr_ground_truth)
+            tr_pred = np.asarray(tr_pred)
+            across_sub_rho = np.corrcoef(tr_ground_truth, tr_pred) # gives sub_dim*2 x sub_dim*2 and will likely be two square clusters truth and pred
+            np.save(f"{folder_to_save_test}/tr_big_corr_matrix.npy", across_sub_rho) # save for viz later
         
         # save training losses
         df_version_mae = pd.DataFrame(mae_train_list)
@@ -484,10 +515,12 @@ def whole_model_arch(config):
         write_to_file("TEST Mean MSE:", filepath=write_fpath)
         write_to_file(np.nanmean(mse_test_list), filepath=write_fpath)
 
-        # np.save(f"{folder_to_save_test}/train_ground_truth.npy", tr_ground_truth)
-        # np.save(f"{folder_to_save_test}/train_pred.npy", tr_pred)
+        np.save(f"{folder_to_save_test}/train_ground_truth.npy", tr_ground_truth)
+        np.save(f"{folder_to_save_test}/train_pred.npy", tr_pred)
         np.save(f"{folder_to_save_test}/test_ground_truth.npy", te_ground_truth)
         np.save(f"{folder_to_save_test}/test_pred.npy", te_pred)
+
+        write_to_file(f"TRAIN AND TEST COMPLETE for model:\n{model_details}", filepath=write_fpath)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')

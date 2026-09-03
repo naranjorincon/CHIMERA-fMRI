@@ -90,18 +90,25 @@ def ico_matrix_to_native_mesh(input_mat, tri_indices_ico6subico2_fpath=None,
     
     return out_fpath
 
+def make_nemat_allsubj(data, num_nodes):
+    '''
+    Takes a numpy array of size [num_subj, size_vectorized_netmat] and reshapes to [num_subj, num_nodes, num_nodes]
+    '''
+    out = np.zeros([data.shape[0], num_nodes, num_nodes]) # init with ones of same size as output
+    for i in range(data.shape[0]): # for each sub
+        out[i, :, :] = make_netmat(data[i], num_nodes)
+    return out
 
-def make_netmat(data, netmat_dim=100):
+def make_netmat(data, num_nodes=100):
     '''
     Makes netmat from upper triangle in numpy
     '''
-    out_mat_init = np.zeros((netmat_dim,netmat_dim))#.reshape(netmat_dim,netmat_dim)
+    out_mat_init = np.zeros((num_nodes,num_nodes))#.reshape(netmat_dim,netmat_dim)
     indeces = np.triu_indices_from(out_mat_init,k=1) # k=1 means no diagonal?
     out_mat_init[indeces] = data #presumably, data is from upper triangle from matlab but needs index lower trinagle to have good visuals not sure why...
     out_mat_init = out_mat_init + out_mat_init.T
     np.fill_diagonal(out_mat_init, 1)
     return out_mat_init
-
 
 def fcn_extract_good_subjects(first_data, second_data, first_IDs_removal, second_IDs_removal):
     unifying_train_list_to_remove = (first_IDs_removal+second_IDs_removal).astype(bool)
@@ -183,17 +190,17 @@ def fcn_load_clean_prep_data(brain_rep_files=None,
     if train_val_test_csv is None: #default
         train_val_test_csv = pd.read_csv("/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/utils/subj_ids/ABCDv6/ABCD_train_val_test_split.csv")
 
-    ###############################################################
-    if overfit_condition_sub_range == 0: #default and means do all
-        overfit_condition_sub_range = brain_rep_files.shape[0]
+    # ###############################################################
+    # if overfit_condition_sub_range == 0: #default and means do all
+    #     overfit_condition_sub_range = brain_rep_files.shape[0]
 
     get_train_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "train"]["index"].to_numpy()[:overfit_condition_sub_range]
-    get_validation_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["index"].to_numpy()#[:2] #[1917:1919]
+    get_validation_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["index"].to_numpy()[:2] #[1917:1919]
     get_test_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "test"]["index"].to_numpy()[:2] #[2117:2119]
     print(f"Train Subjects:{len(get_train_iix)}\nValidation Subjects: {len(get_validation_iix)}\nTest Subjects: {len(get_test_iix)}")
 
     get_train_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "train"]["subID"].to_numpy()[:overfit_condition_sub_range]
-    get_validation_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["subID"].to_numpy()#[:2] #[1917:1919]
+    get_validation_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["subID"].to_numpy()[:2] #[1917:1919]
     get_test_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "test"]["subID"].to_numpy()[:2] #[2117:2119]
 
     # split into sample types
@@ -248,43 +255,61 @@ def fcn_get_final_train_val_test_split(input_files,
     data_train, data_train_label = fcn_extract_good_subjects(data_train, data_train_label, remove_train_IDs, remove_train_IDs_label)
     data_validation, data_validation_label = fcn_extract_good_subjects(data_validation, data_validation_label, remove_validation_IDs, remove_validation_IDs_label)
     data_test, data_test_label = fcn_extract_good_subjects(data_test, data_test_label, remove_test_IDs, remove_test_IDs_label)
-
     #normalize as needed or transform as required
     train_mu = np.mean(data_train,axis=0)
     train_sigma = np.std(data_train, axis=0)
     print(f"TRAIN MEAN SHAPE: {train_mu.shape}")
     print(f"TRAIN SIGMA SHAPE: {train_sigma.shape}")
-    if data_train.ndim == 4: #four so B,C,P,V
-        main_root="/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI"
+    main_root="/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI"
+    topomap_or_connectome = "connectome"
+    if topomap_or_connectome == "connectome":
+        if train_mu.shape[1] == 4950:
+            parcel_size = 100
+        elif train_mu.shape[1] == 44850:
+            parcel_size = 300
+        elif train_mu.shape[1] == 64620:
+            parcel_size = 360
+
+        train_mu = make_netmat(train_mu, parcel_size)
+        outpath=f"{main_root}/test_surface_check_AVERAGE_connectome.npy"
+        np.save(outpath,train_mu)
+    elif topomap_or_connectome == "topomap":
         tri_indices_ico6subico2_fpath=f"{main_root}/patch_extraction/triangle_indices_ico_6_sub_ico_2.csv"
         ico06_sphere=f"{main_root}/surfaces/ico-6.L.surf.gii"
         subject_sphere=f"{main_root}/surfaces/naranjo_ico.L.surf.gii" 
-        outpath=f"{main_root}/test_surface_check_AVERAGE.ext"
+        outpath=f"{main_root}/test_surface_check_AVERAGE.npy"
         ico_matrix_to_native_mesh(train_mu, tri_indices_ico6subico2_fpath, ico06_sphere, subject_sphere, outpath)
-
+            
     # prep for outputs
     train_mu_label = np.mean(data_train_label,axis=0)
     train_sigma_label = np.std(data_train_label, axis=0)
     print(f"TRAIN MEAN SHAPE: {train_mu_label.shape}")
     print(f"TRAIN SIGMA SHAPE: {train_sigma_label.shape}")
-
-    #prep data!
-    print("PREPARING DATA so raw, or normalizing, or other.")
+    print(f"PREPARING DATA. Choices are input:{prep_choice_input} and output:{prep_choice_output}")
     data_train = fcn_prepare_data(data_train, train_mu, train_sigma, prep_choice_input)
     data_validation = fcn_prepare_data(data_validation, train_mu, train_sigma, prep_choice_input)
     data_test = fcn_prepare_data(data_test, train_mu, train_sigma, prep_choice_input)
-
     data_train_label = fcn_prepare_data(data_train_label, train_mu_label, train_sigma_label, prep_choice_output)
     data_validation_label = fcn_prepare_data(data_validation_label, train_mu_label, train_sigma_label, prep_choice_output)
     data_test_label = fcn_prepare_data(data_test_label, train_mu_label, train_sigma_label, prep_choice_output)
+    #for connectome, expects parcle_size by parcel_size connectome, so converting it as necessary
+    ########## BELOW IS MEANT TO GO FROM VECTORIZED_UPPER TRIANGLE TO ORIGINAL CONNECTOME SHAPE, WAS SUPPOSED TO BE FOR BNT FRAMEWORK
+    # if topomap_or_connectome == "connectome": #only needs to make input be the connectome, output should still be the upper triangle 
+    #     data_train = make_nemat_allsubj(data_train, parcel_size)
+    #     data_validation = make_nemat_allsubj(data_validation, parcel_size)
+    #     data_test = make_nemat_allsubj(data_test, parcel_size)
 
+    #     data_train_label = make_nemat_allsubj(data_train_label, parcel_size)
+    #     data_validation_label = make_nemat_allsubj(data_validation_label, parcel_size)
+    #     data_test_label = make_nemat_allsubj(data_test_label, parcel_size)
+        
     #### MODEL DATALOADERS
-    train_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_train).float(), torch.from_numpy((data_train_label)).float())
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = train_batch_sz, shuffle=False, num_workers=10)
-    val_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_validation).float(), torch.from_numpy((data_validation_label)).float())
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = train_batch_sz, shuffle=False, num_workers=10)
-    test_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_test).float(), torch.from_numpy((data_test_label)).float())
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = 1, shuffle=False, num_workers=10)
+    train_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_train).float(), torch.from_numpy(data_train_label).float())
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = train_batch_sz, shuffle=True, num_workers=10)
+    val_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_validation).float(), torch.from_numpy(data_validation_label).float())
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = train_batch_sz, shuffle=True, num_workers=10)
+    test_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_test).float(), torch.from_numpy(data_test_label).float())
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = 1, shuffle=True, num_workers=10)
 
     return train_loader, val_loader, test_loader, train_mu_label 
 
