@@ -22,7 +22,8 @@ class topomap_recon(nn.Module):
                 VAE_flag=False,
                 VAE_latent_dim=100,
                 latent_samples=100,
-                decoder_name="LinearDecoder"
+                decoder_name="LinearDecoder",
+                specific_model=None
             ):
         
         super().__init__()
@@ -67,12 +68,6 @@ class topomap_recon(nn.Module):
                  n_channels=num_channels,
                  n_patches=num_patches,
                  n_vertices=num_vertices)
-        elif decoder_name == "MeshConvDecoder":
-            mesh = trimesh.creation.icosphere(subdivisions=ico_res)
-            A_norm = build_normalized_adjacency(mesh.face_adjacency, num_patches=num_patches)
-            self.decoder = MeshConvDecoder(edge_index=A_norm, dim=dim, 
-                                           hidden=dim, n_channels=num_channels, 
-                                           n_vertices=num_vertices)
         elif decoder_name == "GATDecoder":
             mesh = trimesh.creation.icosphere(subdivisions=ico_res)
             edge_index = build_edge_index(mesh.face_adjacency)
@@ -165,31 +160,6 @@ class PointwiseDecoder(nn.Module):
         out = out.transpose(1,2).reshape(z.size(0), self.n_patches, self.n_channels, self.n_vertices) #return to original dimes
         return out.permute(0, 2, 1, 3) #finish by returning it to original exact shape
 
-def build_normalized_adjacency(patch_adjacency, num_patches):
-        row, col = patch_adjacency[:,0], patch_adjacency[:,1]
-        #symmetric to have both directions
-        row_full = np.concatenate([row,col]) 
-        col_full = np.concatenate([col, row]) 
-        #add self loops as well, adds them at the end
-        self_idx = np.arange(num_patches)
-        row_full = np.concatenate([row_full,self_idx]) 
-        col_full = np.concatenate([col_full, self_idx]) 
-
-        values = np.ones(len(row_full)) #mat of ones
-        A = torch.sparse_coo_tensor( #we are giving the row and col indeces for non zeros in sparse init graph tensor
-            torch.tensor([row_full, col_full]), torch.tensor(values, dtype=torch.float32),
-                         size=(num_patches, num_patches) #patch by patch A mat shape
-        ).coalesce() #only works for sparse COO tensor and returns copy of self optimal thign to do. Seems to clean dupliactes or redundancy in sparse variables.
-
-        # symmetric normalization D^-1/2 A D^-1/2 (standard GCN normalization)
-        deg = torch.sparse.sum(A, dim=1).to_dense()
-        d_inv_sqrt = deg.pow(-0.5)
-        d_inv_sqrt[torch.isinf(d_inv_sqrt)] = 0
-        idx = A.indices()
-        norm_vals = d_inv_sqrt[idx[0]] * A.values() * d_inv_sqrt[idx[1]]
-        A_norm = torch.sparse_coo_tensor(idx, norm_vals, size=(num_patches, num_patches)).coalesce()
-        return A_norm
-
 def build_edge_index(face_adjacency):
         row, col = face_adjacency[:, 0], face_adjacency[:, 1]
         row_full = np.concatenate([row, col])
@@ -208,59 +178,6 @@ def make_batched_edges(edge_index, batch_size, num_nodes):
         offsets = torch.arange(batch_size, device=device).view(batch_size, 1, 1) * num_nodes
         batched = edge_index.unsqueeze(0).expand(batch_size, -1, -1) + offsets # B,2,E
         return batched.permute(1,0,2).reshape(2, batch_size*E)
-
-class MeshConvDecoder(nn.Module):
-    '''Attempting to build a mesh/spherical convolution decoder. Main goal of a SiT decoder
-    is extract information from the latent dim D to get the original 15x153 information. then reshape 
-    to be Bx15x320x153 for losses. SiT embeds information across patches so that stays the same. Here, you need the known face adj matrix
-    instead of the euclidean conv. Need to get that adj matrix, but how... TODO find out about the adj matrix to test this.
-    
-    On a closed triangulated sphere, every edge is shared by exactly two faces. Imagine it.
-    So each triangular face has exactly 3 edge-adjacent neighbors (one across each of its own 3 edges). 
-    That'll be the adjacency structure to use here. It is already determined, so we can use this.
-    '''
-    def __init__(self, edge_index, dim=192, hidden=192, n_channels=15, n_vertices=153):
-
-        super().__init__()
-        # self.register_buffer('A', adj_sparse) #normalized Adj matrix of all patchesxpatches so 320x320
-        # self.register_buffer('edge_index', edge_index) #like in GAT its (2,E) and scalses better than A as adj_sparse 
-        self.edge_index = edge_index
-        self.lin1 = nn.Linear(dim, hidden)
-        self.lin2 = nn.Linear(hidden, hidden)
-        self.head = nn.Linear(hidden, n_channels*n_vertices)
-
-    # def propagate(self, x, lin):
-    #     '''sparse for optimizing computation casue A is an adj mat, but does that work for this? all 320 are fully connected no? 
-    #     Doing a matrix multiplication between the adj matrix A and a linear transform after reshaping the input x.'''
-    #     print(f"Inside MeshConvDecoder. First/Second propagate. Input shape: {x.shape}")
-    #     adj_mat=self.A
-    #     print(adj_mat.shape)
-    #     linear_transform=lin(x.reshape(-1, x.size(-1))) #shape collapses batch with 320patches so it becomes [B*320x192] 
-    #     print(f"Now it is shape: {linear_transform.shape}")
-    #     out = F.gelu(torch.sparse.mm(adj_mat, linear_transform).reshape(x.shape[0], 320, -1)) #matrix multiplication of sparse COO fails because A is 320x320 and lin(x) is [B*320x192]
-    #     print(f"FINAL IS SHAPE: {out.shape}")
-    #     return out
-
-    def propagate(self, x, lin):
-        # x: B x N x D
-        B, N, _ = x.shape
-        h = lin(x)                                  # B x N x hidden
-        src, dst = self.edge_index                   # each (E,)
-        messages = h[:, src, :]                       # B x E x hidden  (features of source nodes per edge)
-        out = torch.zeros_like(h)
-        # scatter-add messages into destination nodes, per batch
-        dst_expand = dst.view(1, -1, 1).expand(B, -1, h.size(-1))
-        out.scatter_add_(1, dst_expand, messages)
-        # normalize by degree (or precompute this as a buffer)
-        deg = torch.zeros(N, device=x.device).scatter_add_(0, dst, torch.ones_like(dst, dtype=torch.float))
-        out = out / deg.clamp(min=1).view(1, -1, 1)
-        return F.gelu(out)
-
-    def forward(self, z): #Bx320x192
-        h = self.propagate(z, self.lin1)
-        h = self.propagate(h, self.lin2)
-        out = self.head(h).reshape(-1, 320, 15, 153)
-        return out.permute(0,2,1,3)
 
 class GATDecoder(nn.Module):
     def __init__(self, edge_index,

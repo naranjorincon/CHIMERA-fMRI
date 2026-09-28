@@ -143,10 +143,24 @@ def fcn_prepare_data(data, train_mu, train_sigma, prep_choice=None):
         return data #do nothing and return it as is
 
     if prep_choice == "norm":
-        data = (data - train_mu) / (train_sigma + 10e-99)
+        data = (data - train_mu) / (train_sigma + 1e-99)
     elif prep_choice == "demean":
         data = (data - train_mu)
     return data
+
+def fisher_z_transform(correlation_values):
+    """
+    Apply Fisher Z-transform to correlation values.
+    
+    Args:
+    - Correlation_values vectorized upper/lower triangle
+    
+    Returns:
+    - Fisher Z-transformed values.
+    """
+
+    z_output = 0.5 * np.log((1 + correlation_values) / (1 - correlation_values))
+    return z_output
         
 def fcn_get_clean_data(data=None, sample_IDs=None, indeces=None):
     #flatten data but keep subjects so make 2D
@@ -169,7 +183,7 @@ def fcn_get_clean_data(data=None, sample_IDs=None, indeces=None):
         print("data is clean")
         subjects_to_remove = index_range*0 #all stay as ones #np.asarray([]) #empty list
         data = data.reshape(get_original_shape) #backt to tuple so reshape can happen
-        return data, subjects_to_remove
+        return data, subjects_to_remove.astype(bool)
     else:
         print("Found NaNs or INFs. Identifying for cleaning,.")
         #infer if topomap or connectome
@@ -178,10 +192,10 @@ def fcn_get_clean_data(data=None, sample_IDs=None, indeces=None):
         subjects_to_remove = (find_inf_mask+find_nan_mask)
         subjects_to_remove = index_range*(1*subjects_to_remove) # subjects_to_remove #sample_IDs[subjects_to_remove]
         data = data.reshape(get_original_shape)
-        return data, subjects_to_remove
+        return data, subjects_to_remove.astype(bool)
 
 def fcn_load_clean_prep_data(brain_rep_files=None, 
-                             train_val_test_csv=None, overfit_condition_sub_range: int=0):
+                             train_val_test_csv=None):
     '''Function takes in a subject list, loads in those subjects and their 
     input/output data. Then preps them from raw input --> toch datasets for model.
     '''
@@ -190,24 +204,20 @@ def fcn_load_clean_prep_data(brain_rep_files=None,
     if train_val_test_csv is None: #default
         train_val_test_csv = pd.read_csv("/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/utils/subj_ids/ABCDv6/ABCD_train_val_test_split.csv")
 
-    # ###############################################################
-    # if overfit_condition_sub_range == 0: #default and means do all
-    #     overfit_condition_sub_range = brain_rep_files.shape[0]
-
-    get_train_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "train"]["index"].to_numpy()[:overfit_condition_sub_range]
-    get_validation_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["index"].to_numpy()[:2] #[1917:1919]
-    get_test_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "test"]["index"].to_numpy()[:2] #[2117:2119]
+    get_train_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "train"]["index"].to_numpy()#[:100]
+    get_validation_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["index"].to_numpy()#[:100]
+    get_test_iix = train_val_test_csv[train_val_test_csv['sample_split'] == "test"]["index"].to_numpy()
     print(f"Train Subjects:{len(get_train_iix)}\nValidation Subjects: {len(get_validation_iix)}\nTest Subjects: {len(get_test_iix)}")
 
-    get_train_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "train"]["subID"].to_numpy()[:overfit_condition_sub_range]
-    get_validation_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["subID"].to_numpy()[:2] #[1917:1919]
-    get_test_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "test"]["subID"].to_numpy()[:2] #[2117:2119]
+    get_train_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "train"]["subID"].to_numpy()#[:100]
+    get_validation_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "validation"]["subID"].to_numpy()#[:100]
+    get_test_IDs = train_val_test_csv[train_val_test_csv['sample_split'] == "test"]["subID"].to_numpy()
 
     # split into sample types
     train_brain_rep_files      = brain_rep_files[get_train_iix]
     validation_brain_rep_files = brain_rep_files[get_validation_iix]
     test_brain_rep_files       = brain_rep_files[get_test_iix]
-        
+    
     data_train = []
     for file in train_brain_rep_files:
         data_train.append(fcn_to_load_data_correctly(file)) #loads into this list
@@ -229,27 +239,28 @@ def fcn_load_clean_prep_data(brain_rep_files=None,
     
     data_test = np.asarray(data_test)
     data_test, remove_test_IDs = fcn_get_clean_data(data_test, get_test_IDs)
+
+    print(f"SUBJECT TEST TO REMOVE BC PFM MISSING: {get_test_IDs[remove_test_IDs]}")
     
     return data_train, data_validation, data_test, remove_train_IDs, remove_validation_IDs, remove_test_IDs
 
 def fcn_get_final_train_val_test_split(input_files, 
-                                  output_files, 
-                                  overfit_condition_sub_range: int=0, 
-                                  prep_choice_input: str="norm", prep_choice_output:str="norm", train_batch_sz: int=32):
+                                  output_files,
+                                  prep_choice_input: str="norm", prep_choice_output:str="norm", train_batch_sz: int=32, train_val_test_csv=None):
     
     [data_train,
      data_validation,
      data_test, 
      remove_train_IDs, 
      remove_validation_IDs, 
-     remove_test_IDs] = fcn_load_clean_prep_data(brain_rep_files=input_files, overfit_condition_sub_range=overfit_condition_sub_range)
+     remove_test_IDs] = fcn_load_clean_prep_data(brain_rep_files=input_files, train_val_test_csv=train_val_test_csv)
     
     [data_train_label,
      data_validation_label,
      data_test_label,
      remove_train_IDs_label,
      remove_validation_IDs_label,
-     remove_test_IDs_label] = fcn_load_clean_prep_data(brain_rep_files=output_files,  overfit_condition_sub_range=overfit_condition_sub_range)
+     remove_test_IDs_label] = fcn_load_clean_prep_data(brain_rep_files=output_files, train_val_test_csv=train_val_test_csv)
     
     #not feed this into the fcn for removing correct subjects
     data_train, data_train_label = fcn_extract_good_subjects(data_train, data_train_label, remove_train_IDs, remove_train_IDs_label)
@@ -260,25 +271,25 @@ def fcn_get_final_train_val_test_split(input_files,
     train_sigma = np.std(data_train, axis=0)
     print(f"TRAIN MEAN SHAPE: {train_mu.shape}")
     print(f"TRAIN SIGMA SHAPE: {train_sigma.shape}")
-    main_root="/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI"
-    topomap_or_connectome = "connectome"
-    if topomap_or_connectome == "connectome":
-        if train_mu.shape[1] == 4950:
-            parcel_size = 100
-        elif train_mu.shape[1] == 44850:
-            parcel_size = 300
-        elif train_mu.shape[1] == 64620:
-            parcel_size = 360
+    # main_root="/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI"
+    # topomap_or_connectome = "connectome"
+    # if topomap_or_connectome == "connectome":
+    #     # if data_train.shape[1] == 4950:
+    #     #     parcel_size = 100
+    #     # elif data_train.shape[1] == 44850:
+    #     #     parcel_size = 300
+    #     # elif data_train.shape[1] == 64620:
+    #     #     parcel_size = 360
 
-        train_mu = make_netmat(train_mu, parcel_size)
-        outpath=f"{main_root}/test_surface_check_AVERAGE_connectome.npy"
-        np.save(outpath,train_mu)
-    elif topomap_or_connectome == "topomap":
-        tri_indices_ico6subico2_fpath=f"{main_root}/patch_extraction/triangle_indices_ico_6_sub_ico_2.csv"
-        ico06_sphere=f"{main_root}/surfaces/ico-6.L.surf.gii"
-        subject_sphere=f"{main_root}/surfaces/naranjo_ico.L.surf.gii" 
-        outpath=f"{main_root}/test_surface_check_AVERAGE.npy"
-        ico_matrix_to_native_mesh(train_mu, tri_indices_ico6subico2_fpath, ico06_sphere, subject_sphere, outpath)
+    #     # train_mu = make_netmat(train_mu, parcel_size)
+    #     outpath=f"{main_root}/train_AVERAGE_connectome_{prep_choice_input}_{prep_choice_output}.npy"
+    #     np.save(outpath,train_mu)
+    # elif topomap_or_connectome == "topomap":
+    #     tri_indices_ico6subico2_fpath=f"{main_root}/patch_extraction/triangle_indices_ico_6_sub_ico_2.csv"
+    #     ico06_sphere=f"{main_root}/surfaces/ico-6.L.surf.gii"
+    #     subject_sphere=f"{main_root}/surfaces/naranjo_ico.L.surf.gii" 
+    #     outpath=f"{main_root}/test_surface_check_AVERAGE_{prep_choice_input}_{prep_choice_output}.npy"
+    #     ico_matrix_to_native_mesh(train_mu, tri_indices_ico6subico2_fpath, ico06_sphere, subject_sphere, outpath)
             
     # prep for outputs
     train_mu_label = np.mean(data_train_label,axis=0)
@@ -307,21 +318,90 @@ def fcn_get_final_train_val_test_split(input_files,
     train_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_train).float(), torch.from_numpy(data_train_label).float())
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size = train_batch_sz, shuffle=True, num_workers=10)
     val_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_validation).float(), torch.from_numpy(data_validation_label).float())
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = train_batch_sz, shuffle=True, num_workers=10)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size = train_batch_sz, shuffle=False, num_workers=10)
     test_dataset = torch.utils.data.TensorDataset(torch.from_numpy(data_test).float(), torch.from_numpy(data_test_label).float())
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = 1, shuffle=True, num_workers=10)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size = 1, shuffle=False, num_workers=10)
 
     return train_loader, val_loader, test_loader, train_mu_label 
 
-def fcn_get_torch_loaders(input_files, output_files, train_batch_sz, prep_choice_input, prep_choice_output, overfit_condition_sub_range: int=0):
-    train_loader, val_loader, test_loader, train_mu_label = fcn_get_final_train_val_test_split(input_files, output_files, overfit_condition_sub_range=overfit_condition_sub_range, 
-                                  prep_choice_input=prep_choice_input, prep_choice_output=prep_choice_output, train_batch_sz=train_batch_sz)
+def fcn_get_final_train_val_test_split_fusioncase(input_files,  
+                                  prep_choice_input: str="norm", train_val_test_csv=None):
+    
+    [data_train,
+     data_validation,
+     data_test, 
+     remove_train_IDs, 
+     remove_validation_IDs, 
+     remove_test_IDs] = fcn_load_clean_prep_data(brain_rep_files=input_files, train_val_test_csv=train_val_test_csv)
+    
+    if remove_train_IDs.sum() > 0:
+        data_train = np.delete(data_train, remove_train_IDs, axis=0)
+    if remove_validation_IDs.sum() > 0:
+        data_validation = np.delete(data_validation, remove_validation_IDs, axis=0)
+    if remove_test_IDs.sum() > 0:
+        data_test = np.delete(data_test, remove_test_IDs, axis=0)
+    
+    #normalize as needed or transform as required
+    train_mu = np.nanmean(data_train,axis=0)
+    train_sigma = np.nanstd(data_train, axis=0)
+    print(f"TRAIN MEAN SHAPE: {train_mu.shape}")
+    print(f"TRAIN SIGMA SHAPE: {train_sigma.shape}")
+    
+    print(f"PREPARING DATA. Choices are input:{prep_choice_input}")
+    data_train = fcn_prepare_data(data_train, train_mu, train_sigma, prep_choice_input)
+    data_validation = fcn_prepare_data(data_validation, train_mu, train_sigma, prep_choice_input)
+    data_test = fcn_prepare_data(data_test, train_mu, train_sigma, prep_choice_input)
+        
+    return data_train, data_validation, data_test, train_mu
 
-    return train_loader, val_loader, test_loader, train_mu_label
+def fcn_get_torch_loaders(input_files=None, output_files=None, 
+                          train_batch_sz=None, prep_choice_input=None, 
+                          prep_choice_output=None,
+                          regular_reconstruction: bool=True, train_val_test_csv=None
+    ):
 
-def fcn_get_file_lists_and_sort(main_brainrep_data_path_root, dataset_choice, 
-                                data_type_input, data_type_output, 
-                                input_dim, output_dim, icores=None, 
+    if regular_reconstruction is True:
+        train_loader, val_loader, test_loader, train_mu = fcn_get_final_train_val_test_split(input_files, output_files, 
+                                    prep_choice_input=prep_choice_input, prep_choice_output=prep_choice_output, train_batch_sz=train_batch_sz, train_val_test_csv=train_val_test_csv)
+
+    else: #so not regular and using fusion insteed
+        #here this should be a list of input files
+        assert isinstance(input_files, list) and isinstance(prep_choice_input, list), "For fusion case, this should be a list so we can iterate though file type and save them all for PoE input model."
+
+        all_train_data_list      = []
+        all_validation_data_list = []
+        all_test_data_list       = []
+        train_mu                 = []
+        for i, (curr_input_files) in enumerate(input_files):
+            curr_prep_choice = prep_choice_input[i]
+            # print(len(curr_input_files))
+            data_train, data_validation, data_test, curr_train_mu = fcn_get_final_train_val_test_split_fusioncase(input_files=curr_input_files,
+                                        prep_choice_input=curr_prep_choice, train_val_test_csv=train_val_test_csv)
+            
+            # store them here as list in order, its any order but for us it should be as ICA,PFM,sch100,sch200,sch300,glasser360
+            all_train_data_list.append(torch.from_numpy(data_train).float())
+            all_validation_data_list.append(torch.from_numpy(data_validation).float())
+            all_test_data_list.append(torch.from_numpy(data_test).float())
+            train_mu.append(curr_train_mu)
+
+        train_ds       = torch.utils.data.TensorDataset(all_train_data_list[0], all_train_data_list[1], all_train_data_list[2], all_train_data_list[3], all_train_data_list[4], all_train_data_list[5])
+        validation_ds  = torch.utils.data.TensorDataset(all_validation_data_list[0], all_validation_data_list[1], all_validation_data_list[2], all_validation_data_list[3], all_validation_data_list[4], all_validation_data_list[5])
+        test_ds        = torch.utils.data.TensorDataset(all_test_data_list[0], all_test_data_list[1], all_test_data_list[2], all_test_data_list[3], all_test_data_list[4], all_test_data_list[5])
+
+        train_loader        = torch.utils.data.DataLoader(train_ds, batch_size=train_batch_sz, shuffle=True,  drop_last=True)
+        val_loader          = torch.utils.data.DataLoader(validation_ds, batch_size=train_batch_sz, shuffle=False, drop_last=False)
+        test_loader         = torch.utils.data.DataLoader(test_ds, batch_size=1, shuffle=False, drop_last=False)
+
+        #### MODEL DATALOADERS
+        # train_loader = torch.utils.data.DataLoader(all_train_data_list, batch_size = train_batch_sz, shuffle=True, num_workers=10)
+        # val_loader = torch.utils.data.DataLoader(all_validation_data_list, batch_size = train_batch_sz, shuffle=False, num_workers=10)
+        # test_loader = torch.utils.data.DataLoader(all_test_data_list, batch_size = 1, shuffle=False, num_workers=10)
+        
+    return train_loader, val_loader, test_loader, train_mu
+
+def fcn_get_file_lists_and_sort(main_brainrep_data_path_root: str="", dataset_choice: str="", 
+                                data_type_input=None, data_type_output=None, 
+                                input_dim=None, output_dim=None, icores=None, 
                                 input_representation_type=None, output_representation_type=None,
                                 get_sub_ids=None, operation: str='reconstruction', left_or_right: str="L",
                                 df_with_sub_prefix=None):
@@ -332,7 +412,7 @@ def fcn_get_file_lists_and_sort(main_brainrep_data_path_root, dataset_choice,
         [input_files_reference.append((input_files[i].split('/')[-1]).split('_')[1]) for i in range(len(input_files))]
         input_ids = np.asarray(input_files_reference)
     elif input_representation_type == "connectome":
-        input_files = glob.glob(f"{main_brainrep_data_path_root}/ABCD_NetMats/{dataset_choice}/{data_type_input}_d{input_dim}/netmats/")
+        input_files = glob.glob(f"{main_brainrep_data_path_root}/ABCD_NetMats/{dataset_choice}/{data_type_input}_d{input_dim}/netmats/*sub*")
         [input_files_reference.append((input_files[i].split('/')[-1]).split('.')[0]) for i in range(len(input_files))]
         input_ids = np.asarray(input_files_reference)
 
@@ -362,6 +442,7 @@ def fcn_get_file_lists_and_sort(main_brainrep_data_path_root, dataset_choice,
             output_ids = np.asarray(output_files_reference)
 
         #make into array
+        print(f"len of output files retrieved that match input: {len(output_files)}")
         output_files = np.asarray(output_files)
 
         #ensure output files match input files cause we might have more/less topomaps VS connectomes or of one connectome VS another connectome
@@ -377,42 +458,53 @@ def fcn_get_file_lists_and_sort(main_brainrep_data_path_root, dataset_choice,
 
     return input_files, output_files
 
+def build_encoders(ICA_encoder, PFM_encoder, schaefer100_encoder, schaefer200_encoder, schaefer300_encoder, glasser360_encoder, device='cpu'):
+    """
+    Load pretrained SiT encoder and connectome encoders.
+    """
+    sit_encoders = {
+        "ICA": ICA_encoder,
+        "PFM": PFM_encoder
+    }
 
+    conn_encoders = {
+        "schaefer100": schaefer100_encoder,
+        "schaefer200": schaefer200_encoder,
+        "schaefer300": schaefer300_encoder,
+        "glasser360": glasser360_encoder
+    }
+    # conn_encoders["100"].load_state_dict(torch.load("conn_enc_100.pt", weights_only=True))
+    # conn_encoders["200"].load_state_dict(torch.load("conn_enc_200.pt", weights_only=True))
+    topo_networks = {"ICA": 15, "PFM": 14}
+    conn_latents  = {"schaefer100": 256, "schaefer200": 256, "schaefer300": 256, "glasser360": 256}
+    conn_n_tri    = {"schaefer100": int(0.5*100*(100-1)), "schaefer200": int(0.5*200*(200-1)),
+                        "schaefer300": int(0.5*300*(300-1)), "glasser360": int(0.5*360*(360-1))
+                        } #upper triangle elements are equal to parcellation N --> 0.5 * N*(N-1)
 
-# import matplotlib.pyplot as plt
-# from nilearn import plotting
-# train_features, train_labels = next(iter(train_loader))
-# print(f"Feature batch shape: {train_features.size()}")
-# print(f"Labels batch shape: {train_labels.size()}")
+    return sit_encoders, topo_networks, conn_encoders, conn_latents, conn_n_tri
 
-# train_features = train_features[0]
-# train_labels = train_labels[0]
-# main_root="/Users/snaranjo/Desktop/neurotranslate/mount_point/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI"
-# tri_indices_ico6subico2_fpath=f"{main_root}/patch_extraction/triangle_indices_ico_6_sub_ico_2.csv"
-# ico06_sphere=f"{main_root}/surfaces/ico-6.L.surf.gii"
-# subject_sphere=f"{main_root}/surfaces/naranjo_ico.L.surf.gii" 
-# outpath=f"{main_root}/test_surface_check.ext"
-# path_to_file = ico_matrix_to_native_mesh(train_features.numpy(), tri_indices_ico6subico2_fpath, ico06_sphere, subject_sphere, outpath)
+def batch_pearson(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """
+    Mean Pearson correlation across subjects (batch dim).
+    Both tensors are flattened per subject before correlation.
+    Returns a scalar float.
+    """
+    # pred   = pred.detach().cpu().float()
+    # target = target.detach().cpu().float()
+    pred = pred.detach().cpu().float().numpy()
+    target = target.detach().cpu().float().numpy()
 
-# surf_map = nib.load(path_to_file).darrays[5].data  # pick channel/darray index
-# path_to_base_surface=f"{main_root}/surfaces/S900.L.very_inflated_MSMAll.32k_fs_LR.surf.gii"
-# print(surf_map.shape)
+    target = target.reshape(target.shape[0],-1)
+    pred = pred.reshape(pred.shape[0],-1)
 
-# fig, axes = plt.subplots(1,2, figsize=(30,15), subplot_kw={'projection': '3d'})
-# axes = axes.flatten()
-# plotting.plot_surf(
-#     path_to_base_surface,
-#     colorbar=True, cmap='coolwarm',
-#     surf_map=surf_map, hemi='left',
-#     view='lateral', axes=axes[0])
+    B = pred.shape[0]
+    # pred   = pred.view(B, -1).numpy()
+    # target = target.view(B, -1).numpy()
 
-# plotting.plot_surf(
-#     path_to_base_surface,
-#     colorbar=True, cmap='coolwarm',
-#     surf_map=surf_map, hemi='right',
-#     view='lateral', axes=axes[1])
-
-# # plt.suptitle("Nothing done to data")
-# img_path='/Users/snaranjo/Desktop/neurotranslate/mount_point/ceph/chpc/shared/janine_bijsterbosch_group/naranjorincon_scratch/NeuroTranslate/CHIMERA-fMRI/'
-# plt.savefig(f"{img_path}/raw_nothing_done_ico2.png", dpi=300)
-# plt.show()
+    from scipy.stats import pearsonr
+    corrs = []
+    for i in range(B):
+        r, _ = pearsonr(pred[i], target[i])
+        if np.isfinite(r):
+            corrs.append(r)
+    return float(np.mean(corrs)) if corrs else float("nan")

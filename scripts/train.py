@@ -10,10 +10,11 @@ import yaml
 import copy
 
 # import helper modules
+import itertools
 import numpy as np
 import pandas as pd
 # from models import models
-from models import experiment_topomap_recon
+from models import experiment_topomap_recon, experiment_connectome_recon
 from utils.helper_functions import * #so id ont have to write ut.write_to_file everytime
 from utils import functions_train
 import torch.optim as optim 
@@ -48,11 +49,12 @@ def fcn_validate(model, val_loader, output_prep_choice,
 
             #make into numpy vars and to cpu
             pred = pred.detach().numpy()
+            pred = pred.reshape(pred.shape[0],-1)
             targets = targets.detach().numpy()
             targets = targets.reshape(targets.shape[0],-1)
-            pred = pred.reshape(pred.shape[0],-1)
             output_average = output_average[np.newaxis]
             output_average = output_average.reshape(output_average.shape[0],-1)
+            # print(f"Inside validation. {pred.shape} {targets.shape} {output_average.shape}")
             if "demean" in output_prep_choice or "norm" in output_prep_choice: # if doing any demeaning, then predictions are of original and we must demean here
                 val_corr_demean = np.corrcoef(targets, pred) #[subj*2 x subj*2] matrix where quadrant1 = target_target, quad2=target_pred, quad3=pred_target, quad4=pred_pred
                 split_half_horizontal = np.split(val_corr_demean, 2, axis = 0) # 0 is top rectangle, 1 is bottom rectangle
@@ -81,7 +83,8 @@ def fcn_validate(model, val_loader, output_prep_choice,
     # across_sub_mse_std = np.std(mse_val_list)
     # because of batching, some in the list are different size so make into whole array
     upto_n_minus1 = np.asarray(val_rho_demean_list[:-1]).squeeze() # all upto last item, do that seperate then concat
-    upto_n_minus1 = upto_n_minus1.reshape(1, upto_n_minus1.shape[0]*upto_n_minus1.shape[1]) #vectorizes to 1xB*tril
+    # print(f"upto_n_minus1----> {upto_n_minus1.shape}, len of val list: {len(val_rho_demean_list)}, {val_rho_demean_list[0].shape}")
+    upto_n_minus1 = upto_n_minus1.reshape(1, upto_n_minus1.shape[0]*upto_n_minus1.shape[1]) # to 1xB*triu
     n_minus_1 = np.asarray(val_rho_demean_list[-1])[np.newaxis,:] 
     val_corr_demean_flat = np.concatenate((upto_n_minus1,n_minus_1), axis=1) # add at end of col
     across_sub_corr_demean = np.mean(val_corr_demean_flat)
@@ -89,7 +92,7 @@ def fcn_validate(model, val_loader, output_prep_choice,
 
     # same for original corr values
     upto_n_minus1 = np.asarray(val_rho_list[:-1]).squeeze() # all upto last item, do that seperate then concat
-    upto_n_minus1 = upto_n_minus1.reshape(1, upto_n_minus1.shape[0]*upto_n_minus1.shape[1]) #vectorizes to 1xB*tril
+    upto_n_minus1 = upto_n_minus1.reshape(1, upto_n_minus1.shape[0]*upto_n_minus1.shape[1]) # to 1xB*triu
     n_minus_1 = np.asarray(val_rho_list[-1])[np.newaxis,:] 
     val_corr_org_flat = np.concatenate((upto_n_minus1,n_minus_1), axis=1) # add at end of col
     across_sub_corr_org = np.mean(val_corr_org_flat)
@@ -112,16 +115,23 @@ def whole_model_arch(config):
     prep_type_output   = config['data']['prep_type_output']
     output_information = [data_type_output, output_dim]
 
+    #infer type of data being used
+    topomap_representations = ["ICA", "PFM", "GRAD", "NMF"] #TODO expand this list as we do more brain reps or get more
+    connectome_representations = ["schaefer", "glasser", "kong", "MSHBM", "TM", "IM"]
     # Training configuration, depends on model being used
-    icores = None if config['data']['icores'] == None else config['data']['icores']
-    if not icores is None:
+    if data_type_input in topomap_representations or data_type_output in topomap_representations:
+        icores = config['data']['icores']
+    else:
+        icores = None
+
+    if icores is not None:
         model_config_topomap = {
         "dim": config['transformer']['dim'],
         "depth": config['transformer']['depth'],
         "heads": config['transformer']['heads'],
-        "num_vertices": config['sub_ico_{}'.format(icores)]['num_vertices'],
+        "num_vertices": config[f'sub_ico_{icores}']['num_vertices'],
         "num_channels": config['data']['input_dim'],
-        "num_patches": config['sub_ico_{}'.format(icores)]['num_patches'],
+        "num_patches": config[f'sub_ico_{icores}']['num_patches'],
         # "dim_head": config['transformer']['dim_head'],
         "dropout": config['transformer']['dropout'],
         "emb_dropout": config['transformer']['emb_dropout'],
@@ -132,6 +142,7 @@ def whole_model_arch(config):
         }
         #choose which to use
         chosen_model_config=model_config_topomap
+        archictecture = getattr(experiment_topomap_recon, config['training']['fcn_model_to_use']) 
     else:
         model_config_connectome = {
             "connectome_features": int(0.5 * input_dim*(input_dim-1)),
@@ -139,12 +150,15 @@ def whole_model_arch(config):
             # "depth": config['transformer']['depth'],
             # "heads": config['transformer']['heads'],
             "emb_dropout": config['transformer']['emb_dropout'], 
+            "VAE_flag": config['transformer']['VAE_flag'],
+            "VAE_latent_dim": config['transformer']['vae_dim'],
             # "dropout":config['transformer']['dropout'],
             "decoder_name": config['transformer']['decoder_name']
         }
 
         #choose which to use
         chosen_model_config=model_config_connectome
+        archictecture = getattr(experiment_connectome_recon, config['training']['fcn_model_to_use']) 
 
     #infer operation to be done
     if input_information == output_information:
@@ -152,9 +166,6 @@ def whole_model_arch(config):
     else:
         operation = "translation"
 
-    #infer type of data being used
-    topomap_representations = ["ICA", "PFM", "GRAD", "NMF"] #TODO expand this list as we do more brain reps or get more
-    connectome_representations = ["schaefer", "glasser", "kong", "MSHBM", "TM", "IM"]
     assert data_type_input in topomap_representations+connectome_representations, "input is not in correct options of viable recons/translations."
 
     if data_type_input in topomap_representations:
@@ -176,10 +187,10 @@ def whole_model_arch(config):
 
     #training model details
     fcn_train = getattr(functions_train, config['training']['fcn_train'])  
-    fcn_model_module = getattr(experiment_topomap_recon, config['training']['fcn_model_to_use']) 
+    fcn_model_module = archictecture
     dataset_choice = config['training']['dataset_choice']
     overfit_condition = config['training']['overfit_condition']
-    overfit_condition_sub_range = config['training']['overfit_condition_sub_range'] if overfit_condition is False else 0 #subset of subjects to debug on
+    overfit_condition_sub_range = config['training']['overfit_condition_sub_range'] if overfit_condition is True else 0 #subset of subjects to debug on
     train_batch_sz = config['training']['bs'] if overfit_condition is False else 8
     LR = config['training']['LR']
     val_epoch = config['training']['val_epoch']
@@ -228,7 +239,7 @@ def whole_model_arch(config):
         "index": np.arange(len(get_sub_ids)),
         "subID": get_sub_ids
     })
-
+    
     input_files, output_files = fcn_get_file_lists_and_sort(main_brainrep_data_path_root, dataset_choice, 
                                 data_type_input, data_type_output, 
                                 input_dim, output_dim, icores=icores, 
@@ -244,7 +255,6 @@ def whole_model_arch(config):
                                                     )
     
     write_to_file(f"Loaded in data. Tunning on dataset: {dataset_choice}", filepath=write_fpath)
-    
     # Initialize model, optimizer, etc.
     model = fcn_model_module(**chosen_model_config).to(device)
     
@@ -355,12 +365,14 @@ def whole_model_arch(config):
                 best_mse = curr_val_mse
                 write_to_file('saving MSE model...', filepath=write_fpath)
                 torch.save(model.state_dict(), os.path.join(folder_to_save_model,f'{model_type}_{model_details}_MSE.pt'))
-            # save model with best MAE - forces values closer to 0
-            curr_val_mae = grpavg_val_mae
-            if curr_val_mae < best_mae:
-                best_mae = curr_val_mae
-                write_to_file('saving MAE model...', filepath=write_fpath)
-                torch.save(model.state_dict(), os.path.join(folder_to_save_model,f'{model_type}_{model_details}_MAE.pt'))
+
+            # # save model with best MAE - forces values closer to 0
+            # curr_val_mae = grpavg_val_mae
+            # if curr_val_mae < best_mae:
+            #     best_mae = curr_val_mae
+            #     write_to_file('saving MAE model...', filepath=write_fpath)
+            #     torch.save(model.state_dict(), os.path.join(folder_to_save_model,f'{model_type}_{model_details}_MAE.pt'))
+
             # save model with best RHO_demean
             curr_val_demean_rho = val_deman_corr # prioritize model with best demean correlation performance with validation set
             if curr_val_demean_rho > best_demean_rho:
@@ -376,8 +388,8 @@ def whole_model_arch(config):
             df_val.to_csv(os.path.join(folder_to_save_losses, 'val_losses_patch.csv'))
 
 
-        write_to_file('saving LAST model...', filepath=write_fpath)
-        torch.save(model.state_dict(), os.path.join(folder_to_save_model,f'{model_type}_{model_details}_LAST.pt'))
+        # write_to_file('saving LAST model...', filepath=write_fpath)
+        # torch.save(model.state_dict(), os.path.join(folder_to_save_model,f'{model_type}_{model_details}_LAST.pt'))
 
     df_version_lr_list = pd.DataFrame(lr_list)
     df_version_lr_list.to_csv(os.path.join(folder_to_save_test, 'model_lr_list.csv'))
@@ -443,8 +455,7 @@ def whole_model_arch(config):
             across_sub_rho = np.corrcoef(te_ground_truth, te_pred) # gives sub_dim*2 x sub_dim*2 and will likely be two square clusters truth and pred
             write_to_file(f"SZ of bigg matrix: {across_sub_rho.shape}", filepath=write_fpath)
             np.save(f"{folder_to_save_test}/te_big_corr_matrix.npy", across_sub_rho) # save for viz later
-
-            import itertools
+            
             # Take only the first 5 batches from the dataloader
             for batch_idx, (images, labels) in enumerate(itertools.islice(train_loader, 5)):
                 # write_to_file(f"Batch {batch_idx}: {images.shape} <--> {labels.shape}", filepath=write_fpath)
@@ -499,11 +510,6 @@ def whole_model_arch(config):
         df_version_mae.to_csv(os.path.join(folder_to_save_test, 'mae_test_model.csv'))
         df_version_mse = pd.DataFrame(mse_test_list)
         df_version_mse.to_csv(os.path.join(folder_to_save_test, 'mse_test_model.csv'))
-
-        #save subjects that were kept i.e. had good data and were not scrubbed during cleaning
-        # train_subjects_to_keep.to_csv(os.path.join(folder_to_save_test, 'train_subjects_to_keep.csv'))
-        # validation_subjects_to_keep.to_csv(os.path.join(folder_to_save_test, 'validation_subjects_to_keep.csv'))
-        # test_subjects_to_keep.to_csv(os.path.join(folder_to_save_test, 'test_subjects_to_keep.csv'))
 
         write_to_file("TRAIN Mean MAE:", filepath=write_fpath)
         write_to_file(np.nanmean(mae_train_list), filepath=write_fpath)
